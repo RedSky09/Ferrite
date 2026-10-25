@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ferrite_core::time::FixedTimestep;
+use ferrite_render::Renderer;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
@@ -38,6 +39,7 @@ struct App<G: Game> {
     timer: FixedTimestep,
     // Arc karena wgpu di M2 butuh berbagi kepemilikan window.
     window: Option<Arc<Window>>,
+    renderer: Option<Renderer>,
 }
 
 impl<G: Game> ApplicationHandler for App<G> {
@@ -51,22 +53,34 @@ impl<G: Game> ApplicationHandler for App<G> {
                 self.config.width,
                 self.config.height,
             ));
-        let window = event_loop
-            .create_window(attrs)
-            .expect("gagal membuat window");
-        self.window = Some(Arc::new(window));
-        log::info!("window dibuat");
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .expect("gagal membuat window"),
+        );
+        let renderer = Renderer::new(window.clone(), event_loop.owned_display_handle());
+        self.window = Some(window);
+        self.renderer = Some(renderer);
+        log::info!("window dan renderer siap");
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.resize(size.width, size.height);
+                }
+            }
             WindowEvent::RedrawRequested => {
                 let steps = self.timer.advance();
                 for _ in 0..steps {
                     self.game.update(self.timer.step_secs());
                 }
                 self.game.draw();
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.render();
+                }
             }
             _ => {}
         }
@@ -88,6 +102,7 @@ pub fn run<G: Game>(config: Config, game: G) -> Result<(), EventLoopError> {
         config,
         game,
         window: None,
+        renderer: None,
     };
     event_loop.run_app(&mut app)
 }
