@@ -1,6 +1,13 @@
-[package]
-name = "ferrite"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "crates/ferrite-core",
+    "crates/ferrite-render",
+    "crates/ferrite-input",
+    "crates/ferrite",
+]
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"

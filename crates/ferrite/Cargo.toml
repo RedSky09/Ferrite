@@ -1,0 +1,10 @@
+[package]
+name = "ferrite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ferrite-core = { path = "../ferrite-core" }
+ferrite-render = { path = "../ferrite-render" }
+ferrite-input = { path = "../ferrite-input" }
