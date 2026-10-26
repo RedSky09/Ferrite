@@ -1,9 +1,52 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use wgpu::util::DeviceExt;
 use wgpu::CurrentSurfaceTexture;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
+
+/// One vertex as it is laid out in GPU memory.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 2],
+    color: [f32; 3],
+}
+
+impl Vertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x3];
+
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
+// A quad made of two triangles, sharing 4 vertices through indices.
+const QUAD_VERTICES: [Vertex; 4] = [
+    Vertex {
+        position: [-0.5, 0.5],
+        color: [1.0, 0.0, 0.0],
+    }, // top left, red
+    Vertex {
+        position: [-0.5, -0.5],
+        color: [0.0, 1.0, 0.0],
+    }, // bottom left, green
+    Vertex {
+        position: [0.5, -0.5],
+        color: [0.0, 0.0, 1.0],
+    }, // bottom right, blue
+    Vertex {
+        position: [0.5, 0.5],
+        color: [1.0, 1.0, 0.0],
+    }, // top right, yellow
+];
+const QUAD_INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
 /// Owns the GPU resources and draws each frame.
 pub struct Renderer {
@@ -15,6 +58,9 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
     pub clear_color: wgpu::Color,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
 }
 
 impl Renderer {
@@ -63,13 +109,24 @@ impl Renderer {
             immediate_size: 0,
         });
 
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("quad vertices"),
+            contents: bytemuck::cast_slice(&QUAD_VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("quad indices"),
+            contents: bytemuck::cast_slice(&QUAD_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("triangle pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[],
+                buffers: &[Some(Vertex::layout())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -101,6 +158,9 @@ impl Renderer {
                 b: 0.30,
                 a: 1.0,
             },
+            vertex_buffer,
+            index_buffer,
+            num_indices: QUAD_INDICES.len() as u32,
         }
     }
 
@@ -170,8 +230,10 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.render_pipeline);
-            // 3 vertices, 1 instance: a single triangle.
-            pass.draw(0..3, 0..1);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            // 6 indices, 1 instance: two triangles forming a quad.
+            pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
         self.queue.submit(Some(encoder.finish()));
