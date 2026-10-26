@@ -7,6 +7,7 @@ struct Demo {
 impl Game for Demo {
     fn update(&mut self, _dt: f32) {
         self.ticks += 1;
+        // Log once per second (60 updates per second).
         if self.ticks % 60 == 0 {
             log::info!("tick {}", self.ticks);
         }
@@ -16,6 +17,7 @@ impl Game for Demo {
 }
 
 fn main() {
-    env_logger::init();
-    run(Config::default(), Demo { ticks: 0 }).expect("event loop gagal");
+    // Millisecond timestamps make timing issues easier to spot.
+    env_logger::builder().format_timestamp_millis().init();
+    run(Config::default(), Demo { ticks: 0 }).expect("event loop failed");
 }

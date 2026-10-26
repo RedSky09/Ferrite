@@ -8,6 +8,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+/// Basic engine settings.
 pub struct Config {
     pub title: String,
     pub width: u32,
@@ -26,10 +27,11 @@ impl Default for Config {
     }
 }
 
+/// Implemented by a game so the engine can drive it.
 pub trait Game {
-    /// Dipanggil dengan langkah waktu tetap (detik).
+    /// Called with a fixed time step, in seconds.
     fn update(&mut self, dt: f32);
-    /// Dipanggil sekali per frame.
+    /// Called once per frame.
     fn draw(&mut self);
 }
 
@@ -37,7 +39,7 @@ struct App<G: Game> {
     config: Config,
     game: G,
     timer: FixedTimestep,
-    // Arc karena wgpu di M2 butuh berbagi kepemilikan window.
+    // Arc because the renderer and the app both need to hold the window.
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
 }
@@ -56,12 +58,12 @@ impl<G: Game> ApplicationHandler for App<G> {
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
-                .expect("gagal membuat window"),
+                .expect("failed to create window"),
         );
         let renderer = Renderer::new(window.clone(), event_loop.owned_display_handle());
         self.window = Some(window);
         self.renderer = Some(renderer);
-        log::info!("window dan renderer siap");
+        log::info!("window and renderer ready");
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -87,13 +89,14 @@ impl<G: Game> ApplicationHandler for App<G> {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Minta frame berikutnya terus-menerus.
+        // Keep requesting the next frame.
         if let Some(window) = &self.window {
             window.request_redraw();
         }
     }
 }
 
+/// Opens a window and runs the game loop until the window is closed.
 pub fn run<G: Game>(config: Config, game: G) -> Result<(), EventLoopError> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);

@@ -1,10 +1,11 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
-use std::borrow::Cow;
 use wgpu::CurrentSurfaceTexture;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
+/// Owns the GPU resources and draws each frame.
 pub struct Renderer {
     instance: wgpu::Instance,
     window: Arc<Window>,
@@ -12,12 +13,12 @@ pub struct Renderer {
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    pub clear_color: wgpu::Color,
     render_pipeline: wgpu::RenderPipeline,
+    pub clear_color: wgpu::Color,
 }
 
 impl Renderer {
-    /// Memblokir sampai GPU siap (cukup untuk native).
+    /// Blocks until the GPU is ready (fine for native targets).
     pub fn new(window: Arc<Window>, display_handle: OwnedDisplayHandle) -> Self {
         pollster::block_on(Self::new_async(window, display_handle))
     }
@@ -31,7 +32,7 @@ impl Renderer {
         );
         let surface = instance
             .create_surface(window.clone())
-            .expect("gagal membuat surface");
+            .expect("failed to create surface");
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -39,16 +40,16 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .expect("GPU yang cocok tidak ditemukan");
+            .expect("no suitable GPU adapter found");
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor::default())
             .await
-            .expect("gagal membuat device");
+            .expect("failed to create device");
 
         let config = surface
             .get_default_config(&adapter, width, height)
-            .expect("surface tidak didukung adapter");
+            .expect("surface is not supported by the adapter");
         surface.configure(&device, &config);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -93,17 +94,19 @@ impl Renderer {
             queue,
             surface,
             config,
+            render_pipeline,
             clear_color: wgpu::Color {
                 r: 0.10,
                 g: 0.20,
                 b: 0.30,
                 a: 1.0,
             },
-            render_pipeline,
         }
     }
 
+    /// Reconfigures the surface after the window size changes.
     pub fn resize(&mut self, width: u32, height: u32) {
+        // A minimized window can report a size of 0, which is invalid.
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
@@ -113,10 +116,11 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Draws one frame.
     pub fn render(&mut self) {
         let frame = match self.surface.get_current_texture() {
             CurrentSurfaceTexture::Success(frame) => frame,
-            // Coba lagi di frame berikutnya.
+            // Skip this frame; the next redraw request will try again.
             CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => return,
             CurrentSurfaceTexture::Suboptimal(texture) => {
                 drop(texture);
@@ -131,12 +135,12 @@ impl Renderer {
                 self.surface = self
                     .instance
                     .create_surface(self.window.clone())
-                    .expect("gagal membuat ulang surface");
+                    .expect("failed to recreate surface");
                 self.reconfigure();
                 return;
             }
             CurrentSurfaceTexture::Validation => {
-                panic!("error validasi dari wgpu saat mengambil tekstur layar")
+                panic!("wgpu validation error while acquiring the surface texture")
             }
         };
 
@@ -148,7 +152,6 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         {
-            // Render pass yang hanya membersihkan layar dengan satu warna.
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -156,6 +159,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
+                        // Clear the screen to a single color first.
                         load: wgpu::LoadOp::Clear(self.clear_color),
                         store: wgpu::StoreOp::Store,
                     },
@@ -166,6 +170,7 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.render_pipeline);
+            // 3 vertices, 1 instance: a single triangle.
             pass.draw(0..3, 0..1);
         }
 
