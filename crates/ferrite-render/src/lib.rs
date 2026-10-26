@@ -3,6 +3,7 @@ mod texture;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use ferrite_core::camera::Camera2D;
 use wgpu::util::DeviceExt;
 use wgpu::CurrentSurfaceTexture;
 use winit::event_loop::OwnedDisplayHandle;
@@ -32,14 +33,38 @@ impl Vertex {
     }
 }
 
-// A quad made of two triangles, sharing 4 vertices through indices.
+/// The camera matrix as the shader sees it.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    view_proj: [[f32; 4]; 4],
+}
+
+// A 4x4 world-unit quad centered on the origin, made of two triangles that
+// share 4 vertices through indices.
 // uv (0, 0) is the top-left corner of the image, (1, 1) the bottom-right.
 // The color is a tint multiplied with the texture; white leaves it unchanged.
 const QUAD_VERTICES: [Vertex; 4] = [
-    Vertex { position: [-0.5, 0.5], uv: [0.0, 0.0], color: [1.0, 1.0, 1.0] }, // top left
-    Vertex { position: [-0.5, -0.5], uv: [0.0, 1.0], color: [1.0, 1.0, 1.0] }, // bottom left
-    Vertex { position: [0.5, -0.5], uv: [1.0, 1.0], color: [1.0, 1.0, 1.0] }, // bottom right
-    Vertex { position: [0.5, 0.5], uv: [1.0, 0.0], color: [1.0, 1.0, 1.0] }, // top right
+    Vertex {
+        position: [-2.0, 2.0],
+        uv: [0.0, 0.0],
+        color: [1.0, 1.0, 1.0],
+    }, // top left
+    Vertex {
+        position: [-2.0, -2.0],
+        uv: [0.0, 1.0],
+        color: [1.0, 1.0, 1.0],
+    }, // bottom left
+    Vertex {
+        position: [2.0, -2.0],
+        uv: [1.0, 1.0],
+        color: [1.0, 1.0, 1.0],
+    }, // bottom right
+    Vertex {
+        position: [2.0, 2.0],
+        uv: [1.0, 0.0],
+        color: [1.0, 1.0, 1.0],
+    }, // top right
 ];
 const QUAD_INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -75,6 +100,9 @@ pub struct Renderer {
     index_buffer: wgpu::Buffer,
     num_indices: u32,
     texture_bind_group: wgpu::BindGroup,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
+    pub camera: Camera2D,
     pub clear_color: wgpu::Color,
 }
 
@@ -113,10 +141,44 @@ impl Renderer {
             .expect("surface is not supported by the adapter");
         surface.configure(&device, &config);
 
+        // Camera: a uniform buffer the shader reads, updated every frame.
+        let camera = Camera2D::default();
+        let aspect = width as f32 / height as f32;
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("camera uniform"),
+            contents: bytemuck::bytes_of(&CameraUniform {
+                view_proj: camera.view_projection(aspect),
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("camera bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera bind group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
         // Texture, and the bind group that connects it to the shader.
         let pixels = checkerboard_8x8();
-        let sprite_texture =
-            Texture::from_rgba8(&device, &queue, &pixels, 8, 8, "checkerboard");
+        let sprite_texture = Texture::from_rgba8(&device, &queue, &pixels, 8, 8, "checkerboard");
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -174,8 +236,11 @@ impl Renderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            // If the compiler expects Option<&BindGroupLayout> here, wrap it in Some(...).
-            bind_group_layouts: &[Some(&texture_bind_group_layout)],
+            // Index in this list = @group(N) in the shader.
+            bind_group_layouts: &[
+                Some(&camera_bind_group_layout),
+                Some(&texture_bind_group_layout),
+            ],
             immediate_size: 0,
         });
 
@@ -215,6 +280,9 @@ impl Renderer {
             index_buffer,
             num_indices: QUAD_INDICES.len() as u32,
             texture_bind_group,
+            camera_buffer,
+            camera_bind_group,
+            camera,
             clear_color: wgpu::Color {
                 r: 0.10,
                 g: 0.20,
@@ -264,6 +332,14 @@ impl Renderer {
             }
         };
 
+        // Upload this frame's camera matrix.
+        let aspect = self.config.width as f32 / self.config.height as f32;
+        let uniform = CameraUniform {
+            view_proj: self.camera.view_projection(aspect),
+        };
+        self.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
+
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -290,7 +366,8 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.texture_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(1, &self.texture_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             // 6 indices, 1 instance: two triangles forming a quad.

@@ -10,15 +10,21 @@ struct VertexOutput {
     @location(1) color: vec3<f32>,
 };
 
-// The texture and its sampler, bound from the CPU side as bind group 0.
-@group(0) @binding(0) var t_sprite: texture_2d<f32>;
-@group(0) @binding(1) var s_sprite: sampler;
+// Per-frame data: the camera matrix (bind group 0).
+struct Camera {
+    view_proj: mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> camera: Camera;
 
-// Vertex shader: passes the position through and forwards uv and tint color.
+// Per-image data: the texture and its sampler (bind group 1).
+@group(1) @binding(0) var t_sprite: texture_2d<f32>;
+@group(1) @binding(1) var s_sprite: sampler;
+
+// Vertex shader: transforms world-space positions to clip space with the camera.
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = vec4<f32>(in.position, 0.0, 1.0);
+    out.clip_position = camera.view_proj * vec4<f32>(in.position, 0.0, 1.0);
     out.uv = in.uv;
     out.color = in.color;
     return out;
