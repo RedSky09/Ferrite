@@ -8,6 +8,10 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+// Games only need to depend on `ferrite`, so re-export what they use.
+pub use ferrite_core::camera::Camera2D;
+pub use ferrite_render::{Graphics, Sprite};
+
 /// Basic engine settings.
 pub struct Config {
     pub title: String,
@@ -31,14 +35,15 @@ impl Default for Config {
 pub trait Game {
     /// Called with a fixed time step, in seconds.
     fn update(&mut self, dt: f32);
-    /// Called once per frame.
-    fn draw(&mut self);
+    /// Called once per frame. Queue everything to draw through `gfx`.
+    fn draw(&mut self, gfx: &mut Graphics);
 }
 
 struct App<G: Game> {
     config: Config,
     game: G,
     timer: FixedTimestep,
+    gfx: Graphics,
     // Arc because the renderer and the app both need to hold the window.
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -79,9 +84,10 @@ impl<G: Game> ApplicationHandler for App<G> {
                 for _ in 0..steps {
                     self.game.update(self.timer.step_secs());
                 }
-                self.game.draw();
+                self.gfx.begin_frame();
+                self.game.draw(&mut self.gfx);
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.render();
+                    renderer.render(&self.gfx);
                 }
             }
             _ => {}
@@ -104,6 +110,7 @@ pub fn run<G: Game>(config: Config, game: G) -> Result<(), EventLoopError> {
         timer: FixedTimestep::new(config.updates_per_second),
         config,
         game,
+        gfx: Graphics::new(),
         window: None,
         renderer: None,
     };

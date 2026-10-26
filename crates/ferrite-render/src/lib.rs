@@ -1,15 +1,20 @@
+mod graphics;
 mod texture;
 
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use ferrite_core::camera::Camera2D;
 use wgpu::util::DeviceExt;
 use wgpu::CurrentSurfaceTexture;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
+pub use crate::graphics::{Graphics, Sprite};
 use crate::texture::Texture;
+
+const INITIAL_SPRITE_CAPACITY: usize = 256;
+const VERTICES_PER_SPRITE: usize = 4;
+const INDICES_PER_SPRITE: usize = 6;
 
 /// One vertex as it is laid out in GPU memory.
 #[repr(C)]
@@ -40,33 +45,61 @@ struct CameraUniform {
     view_proj: [[f32; 4]; 4],
 }
 
-// A 4x4 world-unit quad centered on the origin, made of two triangles that
-// share 4 vertices through indices.
-// uv (0, 0) is the top-left corner of the image, (1, 1) the bottom-right.
-// The color is a tint multiplied with the texture; white leaves it unchanged.
-const QUAD_VERTICES: [Vertex; 4] = [
-    Vertex {
-        position: [-2.0, 2.0],
-        uv: [0.0, 0.0],
-        color: [1.0, 1.0, 1.0],
-    }, // top left
-    Vertex {
-        position: [-2.0, -2.0],
-        uv: [0.0, 1.0],
-        color: [1.0, 1.0, 1.0],
-    }, // bottom left
-    Vertex {
-        position: [2.0, -2.0],
-        uv: [1.0, 1.0],
-        color: [1.0, 1.0, 1.0],
-    }, // bottom right
-    Vertex {
-        position: [2.0, 2.0],
-        uv: [1.0, 0.0],
-        color: [1.0, 1.0, 1.0],
-    }, // top right
-];
-const QUAD_INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
+/// The four corners of a sprite: top left, bottom left, bottom right, top right.
+/// uv (0, 0) is the top-left corner of the image, (1, 1) the bottom-right.
+fn sprite_vertices(sprite: &Sprite) -> [Vertex; 4] {
+    let [x, y] = sprite.position;
+    let hx = sprite.size[0] * 0.5;
+    let hy = sprite.size[1] * 0.5;
+    let color = sprite.color;
+    [
+        Vertex {
+            position: [x - hx, y + hy],
+            uv: [0.0, 0.0],
+            color,
+        },
+        Vertex {
+            position: [x - hx, y - hy],
+            uv: [0.0, 1.0],
+            color,
+        },
+        Vertex {
+            position: [x + hx, y - hy],
+            uv: [1.0, 1.0],
+            color,
+        },
+        Vertex {
+            position: [x + hx, y + hy],
+            uv: [1.0, 0.0],
+            color,
+        },
+    ]
+}
+
+/// A vertex buffer big enough for `sprite_capacity` sprites. Filled every frame.
+fn create_vertex_buffer(device: &wgpu::Device, sprite_capacity: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sprite vertices"),
+        size: (sprite_capacity * VERTICES_PER_SPRITE * std::mem::size_of::<Vertex>()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// Every sprite uses the same index pattern, shifted by 4 vertices per sprite,
+/// so the index buffer can be filled once when the buffers are (re)created.
+fn create_index_buffer(device: &wgpu::Device, sprite_capacity: usize) -> wgpu::Buffer {
+    let mut indices: Vec<u32> = Vec::with_capacity(sprite_capacity * INDICES_PER_SPRITE);
+    for i in 0..sprite_capacity as u32 {
+        let base = i * VERTICES_PER_SPRITE as u32;
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("sprite indices"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    })
+}
 
 /// Builds an 8x8 checkerboard. The top-left pixel is red so a flipped
 /// image is easy to spot.
@@ -98,12 +131,12 @@ pub struct Renderer {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    num_indices: u32,
+    sprite_capacity: usize,
+    /// Reused every frame to avoid allocating a new Vec each time.
+    vertex_scratch: Vec<Vertex>,
     texture_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    pub camera: Camera2D,
-    pub clear_color: wgpu::Color,
 }
 
 impl Renderer {
@@ -142,14 +175,11 @@ impl Renderer {
         surface.configure(&device, &config);
 
         // Camera: a uniform buffer the shader reads, updated every frame.
-        let camera = Camera2D::default();
-        let aspect = width as f32 / height as f32;
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera uniform"),
-            contents: bytemuck::bytes_of(&CameraUniform {
-                view_proj: camera.view_projection(aspect),
-            }),
+            size: std::mem::size_of::<CameraUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let camera_bind_group_layout =
@@ -218,16 +248,8 @@ impl Renderer {
             ],
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("quad vertices"),
-            contents: bytemuck::cast_slice(&QUAD_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("quad indices"),
-            contents: bytemuck::cast_slice(&QUAD_INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let vertex_buffer = create_vertex_buffer(&device, INITIAL_SPRITE_CAPACITY);
+        let index_buffer = create_index_buffer(&device, INITIAL_SPRITE_CAPACITY);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprite shader"),
@@ -278,17 +300,11 @@ impl Renderer {
             render_pipeline,
             vertex_buffer,
             index_buffer,
-            num_indices: QUAD_INDICES.len() as u32,
+            sprite_capacity: INITIAL_SPRITE_CAPACITY,
+            vertex_scratch: Vec::new(),
             texture_bind_group,
             camera_buffer,
             camera_bind_group,
-            camera,
-            clear_color: wgpu::Color {
-                r: 0.10,
-                g: 0.20,
-                b: 0.30,
-                a: 1.0,
-            },
         }
     }
 
@@ -304,8 +320,23 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Draws one frame.
-    pub fn render(&mut self) {
+    /// Makes sure the GPU buffers can hold `needed` sprites, doubling their size if not.
+    fn ensure_sprite_capacity(&mut self, needed: usize) {
+        if needed <= self.sprite_capacity {
+            return;
+        }
+        let mut capacity = self.sprite_capacity;
+        while capacity < needed {
+            capacity *= 2;
+        }
+        self.vertex_buffer = create_vertex_buffer(&self.device, capacity);
+        self.index_buffer = create_index_buffer(&self.device, capacity);
+        self.sprite_capacity = capacity;
+        log::info!("sprite buffers grown to {capacity} sprites");
+    }
+
+    /// Draws one frame: everything queued in `gfx`, in a single draw call.
+    pub fn render(&mut self, gfx: &Graphics) {
         let frame = match self.surface.get_current_texture() {
             CurrentSurfaceTexture::Success(frame) => frame,
             // Skip this frame; the next redraw request will try again.
@@ -335,10 +366,27 @@ impl Renderer {
         // Upload this frame's camera matrix.
         let aspect = self.config.width as f32 / self.config.height as f32;
         let uniform = CameraUniform {
-            view_proj: self.camera.view_projection(aspect),
+            view_proj: gfx.camera.view_projection(aspect),
         };
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
+
+        // Turn the queued sprites into vertices and upload them in one go.
+        let sprites = gfx.sprites();
+        self.ensure_sprite_capacity(sprites.len());
+        self.vertex_scratch.clear();
+        for sprite in sprites {
+            self.vertex_scratch
+                .extend_from_slice(&sprite_vertices(sprite));
+        }
+        if !self.vertex_scratch.is_empty() {
+            self.queue.write_buffer(
+                &self.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.vertex_scratch),
+            );
+        }
+        let index_count = (sprites.len() * INDICES_PER_SPRITE) as u32;
 
         let view = frame
             .texture
@@ -348,6 +396,12 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         {
+            let clear = wgpu::Color {
+                r: gfx.clear_color[0] as f64,
+                g: gfx.clear_color[1] as f64,
+                b: gfx.clear_color[2] as f64,
+                a: 1.0,
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -356,7 +410,7 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         // Clear the screen to a single color first.
-                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        load: wgpu::LoadOp::Clear(clear),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -365,17 +419,36 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.set_bind_group(1, &self.texture_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            // 6 indices, 1 instance: two triangles forming a quad.
-            pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            if index_count > 0 {
+                pass.set_pipeline(&self.render_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(1, &self.texture_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                // All sprites in one draw call.
+                pass.draw_indexed(0..index_count, 0, 0..1);
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));
         self.window.pre_present_notify();
         self.queue.present(frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sprite_corners_are_placed_around_the_center() {
+        let sprite = Sprite::new([1.0, 2.0], [2.0, 4.0]);
+        let v = sprite_vertices(&sprite);
+        assert_eq!(v[0].position, [0.0, 4.0]); // top left
+        assert_eq!(v[1].position, [0.0, 0.0]); // bottom left
+        assert_eq!(v[2].position, [2.0, 0.0]); // bottom right
+        assert_eq!(v[3].position, [2.0, 4.0]); // top right
+        assert_eq!(v[0].uv, [0.0, 0.0]);
+        assert_eq!(v[2].uv, [1.0, 1.0]);
     }
 }

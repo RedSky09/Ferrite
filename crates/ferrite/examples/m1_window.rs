@@ -1,4 +1,4 @@
-use ferrite::{run, Config, Game};
+use ferrite::{run, Config, Game, Graphics};
 
 struct Demo {
     ticks: u64,
@@ -13,7 +13,7 @@ impl Game for Demo {
         }
     }
 
-    fn draw(&mut self) {}
+    fn draw(&mut self, _gfx: &mut Graphics) {}
 }
 
 fn main() {
