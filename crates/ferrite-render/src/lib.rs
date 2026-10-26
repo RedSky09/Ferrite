@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use std::borrow::Cow;
 use wgpu::CurrentSurfaceTexture;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
@@ -12,6 +13,7 @@ pub struct Renderer {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     pub clear_color: wgpu::Color,
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -49,6 +51,39 @@ impl Renderer {
             .expect("surface tidak didukung adapter");
         surface.configure(&device, &config);
 
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("triangle shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("triangle pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(config.format.into())],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         log::info!("GPU: {:?}", adapter.get_info().name);
 
         Self {
@@ -64,6 +99,7 @@ impl Renderer {
                 b: 0.30,
                 a: 1.0,
             },
+            render_pipeline,
         }
     }
 
@@ -113,7 +149,7 @@ impl Renderer {
 
         {
             // Render pass yang hanya membersihkan layar dengan satu warna.
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -129,6 +165,8 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.draw(0..3, 0..1);
         }
 
         self.queue.submit(Some(encoder.finish()));
