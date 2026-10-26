@@ -1,3 +1,5 @@
+mod texture;
+
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -6,17 +8,20 @@ use wgpu::CurrentSurfaceTexture;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
+use crate::texture::Texture;
+
 /// One vertex as it is laid out in GPU memory.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     position: [f32; 2],
+    uv: [f32; 2],
     color: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x3];
+    const ATTRIBS: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x3];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -28,25 +33,34 @@ impl Vertex {
 }
 
 // A quad made of two triangles, sharing 4 vertices through indices.
+// uv (0, 0) is the top-left corner of the image, (1, 1) the bottom-right.
+// The color is a tint multiplied with the texture; white leaves it unchanged.
 const QUAD_VERTICES: [Vertex; 4] = [
-    Vertex {
-        position: [-0.5, 0.5],
-        color: [1.0, 0.0, 0.0],
-    }, // top left, red
-    Vertex {
-        position: [-0.5, -0.5],
-        color: [0.0, 1.0, 0.0],
-    }, // bottom left, green
-    Vertex {
-        position: [0.5, -0.5],
-        color: [0.0, 0.0, 1.0],
-    }, // bottom right, blue
-    Vertex {
-        position: [0.5, 0.5],
-        color: [1.0, 1.0, 0.0],
-    }, // top right, yellow
+    Vertex { position: [-0.5, 0.5], uv: [0.0, 0.0], color: [1.0, 1.0, 1.0] }, // top left
+    Vertex { position: [-0.5, -0.5], uv: [0.0, 1.0], color: [1.0, 1.0, 1.0] }, // bottom left
+    Vertex { position: [0.5, -0.5], uv: [1.0, 1.0], color: [1.0, 1.0, 1.0] }, // bottom right
+    Vertex { position: [0.5, 0.5], uv: [1.0, 0.0], color: [1.0, 1.0, 1.0] }, // top right
 ];
 const QUAD_INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+/// Builds an 8x8 checkerboard. The top-left pixel is red so a flipped
+/// image is easy to spot.
+fn checkerboard_8x8() -> Vec<u8> {
+    let mut data = Vec::with_capacity(8 * 8 * 4);
+    for y in 0..8 {
+        for x in 0..8 {
+            let color: [u8; 4] = if x == 0 && y == 0 {
+                [255, 0, 0, 255]
+            } else if (x + y) % 2 == 0 {
+                [230, 230, 230, 255]
+            } else {
+                [60, 60, 90, 255]
+            };
+            data.extend_from_slice(&color);
+        }
+    }
+    data
+}
 
 /// Owns the GPU resources and draws each frame.
 pub struct Renderer {
@@ -57,10 +71,11 @@ pub struct Renderer {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
-    pub clear_color: wgpu::Color,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
+    texture_bind_group: wgpu::BindGroup,
+    pub clear_color: wgpu::Color,
 }
 
 impl Renderer {
@@ -98,15 +113,47 @@ impl Renderer {
             .expect("surface is not supported by the adapter");
         surface.configure(&device, &config);
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("triangle shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
-        });
+        // Texture, and the bind group that connects it to the shader.
+        let pixels = checkerboard_8x8();
+        let sprite_texture =
+            Texture::from_rgba8(&device, &queue, &pixels, 8, 8, "checkerboard");
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[],
-            immediate_size: 0,
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sprite bind group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&sprite_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sprite_texture.sampler),
+                },
+            ],
         });
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -120,8 +167,20 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sprite shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            // If the compiler expects Option<&BindGroupLayout> here, wrap it in Some(...).
+            bind_group_layouts: &[Some(&texture_bind_group_layout)],
+            immediate_size: 0,
+        });
+
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("triangle pipeline"),
+            label: Some("sprite pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -152,15 +211,16 @@ impl Renderer {
             surface,
             config,
             render_pipeline,
+            vertex_buffer,
+            index_buffer,
+            num_indices: QUAD_INDICES.len() as u32,
+            texture_bind_group,
             clear_color: wgpu::Color {
                 r: 0.10,
                 g: 0.20,
                 b: 0.30,
                 a: 1.0,
             },
-            vertex_buffer,
-            index_buffer,
-            num_indices: QUAD_INDICES.len() as u32,
         }
     }
 
@@ -230,6 +290,7 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &self.texture_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             // 6 indices, 1 instance: two triangles forming a quad.
