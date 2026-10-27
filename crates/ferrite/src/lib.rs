@@ -4,12 +4,14 @@ use ferrite_core::time::FixedTimestep;
 use ferrite_render::Renderer;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 // Games only need to depend on `ferrite`, so re-export what they use.
 pub use ferrite_core::camera::Camera2D;
+pub use ferrite_input::{Input, Key};
 pub use ferrite_render::{Graphics, Sprite};
 
 /// Basic engine settings.
@@ -33,16 +35,35 @@ impl Default for Config {
 
 /// Implemented by a game so the engine can drive it.
 pub trait Game {
-    /// Called with a fixed time step, in seconds.
-    fn update(&mut self, dt: f32);
+    /// Called with a fixed time step (in seconds) and the current input state.
+    fn update(&mut self, dt: f32, input: &Input);
     /// Called once per frame. Queue everything to draw through `gfx`.
     fn draw(&mut self, gfx: &mut Graphics);
+}
+
+/// Translates a winit key code into the engine's own `Key`.
+fn map_key(code: KeyCode) -> Option<Key> {
+    Some(match code {
+        KeyCode::ArrowLeft => Key::Left,
+        KeyCode::ArrowRight => Key::Right,
+        KeyCode::ArrowUp => Key::Up,
+        KeyCode::ArrowDown => Key::Down,
+        KeyCode::KeyW => Key::W,
+        KeyCode::KeyA => Key::A,
+        KeyCode::KeyS => Key::S,
+        KeyCode::KeyD => Key::D,
+        KeyCode::Space => Key::Space,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Escape => Key::Escape,
+        _ => return None,
+    })
 }
 
 struct App<G: Game> {
     config: Config,
     game: G,
     timer: FixedTimestep,
+    input: Input,
     gfx: Graphics,
     // Arc because the renderer and the app both need to hold the window.
     window: Option<Arc<Window>>,
@@ -79,10 +100,27 @@ impl<G: Game> ApplicationHandler for App<G> {
                     renderer.resize(size.width, size.height);
                 }
             }
+            WindowEvent::KeyboardInput { event, .. } => {
+                // Ignore OS key repeat; we track held keys ourselves.
+                if !event.repeat {
+                    if let PhysicalKey::Code(code) = event.physical_key {
+                        if let Some(key) = map_key(code) {
+                            self.input
+                                .handle_key(key, event.state == ElementState::Pressed);
+                        }
+                    }
+                }
+            }
+            WindowEvent::Focused(false) => {
+                // Key-release events are not delivered while unfocused.
+                self.input.release_all();
+            }
             WindowEvent::RedrawRequested => {
                 let steps = self.timer.advance();
                 for _ in 0..steps {
-                    self.game.update(self.timer.step_secs());
+                    self.game.update(self.timer.step_secs(), &self.input);
+                    // Each press or release is seen by exactly one update.
+                    self.input.clear_transient();
                 }
                 self.gfx.begin_frame();
                 self.game.draw(&mut self.gfx);
@@ -110,6 +148,7 @@ pub fn run<G: Game>(config: Config, game: G) -> Result<(), EventLoopError> {
         timer: FixedTimestep::new(config.updates_per_second),
         config,
         game,
+        input: Input::new(),
         gfx: Graphics::new(),
         window: None,
         renderer: None,

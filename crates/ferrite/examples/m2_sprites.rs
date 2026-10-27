@@ -1,4 +1,4 @@
-use ferrite::{run, Config, Game, Graphics, Sprite};
+use ferrite::{run, Config, Game, Graphics, Input, Sprite};
 
 /// Draws a wavy grid of 960 sprites and sways the camera.
 struct Demo {
@@ -6,7 +6,7 @@ struct Demo {
 }
 
 impl Game for Demo {
-    fn update(&mut self, dt: f32) {
+    fn update(&mut self, dt: f32, _input: &Input) {
         self.time += dt;
     }
 

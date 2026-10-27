@@ -1,11 +1,11 @@
-use ferrite::{run, Config, Game, Graphics};
+use ferrite::{run, Config, Game, Graphics, Input};
 
 struct Demo {
     ticks: u64,
 }
 
 impl Game for Demo {
-    fn update(&mut self, _dt: f32) {
+    fn update(&mut self, _dt: f32, _input: &Input) {
         self.ticks += 1;
         // Log once per second (60 updates per second).
         if self.ticks % 60 == 0 {
