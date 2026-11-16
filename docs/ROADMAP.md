@@ -16,7 +16,7 @@ a demo GIF, and architecture notes.
 
 \- \[x] M1: Window and fixed-timestep game loop
 
-\- \[ ] M2: 2D rendering
+\- \[x] M2: 2D rendering
 
 &#x20; - \[x] M2a: GPU init and clear color
 
@@ -24,11 +24,11 @@ a demo GIF, and architecture notes.
 
 &#x20; - \[x] M2c: Indexed quad with vertex colors
 
-&#x20; - \[ ] M2d: Textured quad (first sprite)
+&#x20; - \[x] M2d: Textured quad (first sprite)
 
-&#x20; - \[ ] M2e: 2D camera and sprite batcher
+&#x20; - \[x] M2e: 2D camera and sprite batcher
 
-\- \[ ] M3: Input
+\- \[x] M3: Input
 
 \- \[ ] M4: Asset loading, spritesheets, animation, simple bitmap font
 
