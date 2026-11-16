@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 ferrite-assets = { path = "../ferrite-assets" }
 ferrite-core = { path = "../ferrite-core" }
+ferrite-ecs = { path = "../ferrite-ecs" }
 ferrite-render = { path = "../ferrite-render" }
 ferrite-input = { path = "../ferrite-input" }
 winit = "0.30"

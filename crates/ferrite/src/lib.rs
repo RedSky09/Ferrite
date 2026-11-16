@@ -12,6 +12,8 @@ use winit::window::{Window, WindowId};
 // Games only need to depend on `ferrite`, so re-export what they use.
 pub use ferrite_assets::{Animation, Font, Frame, Image, Rect, Spritesheet};
 pub use ferrite_core::camera::Camera2D;
+pub use ferrite_core::state::{State, StateMachine};
+pub use ferrite_ecs::{Entity, World};
 pub use ferrite_input::{Input, Key};
 pub use ferrite_render::{Atlas, Graphics, Sprite, UvRect};
 

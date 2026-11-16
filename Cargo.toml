@@ -5,6 +5,7 @@ members = [
     "crates/ferrite-render",
     "crates/ferrite-input",
     "crates/ferrite-assets",
+    "crates/ferrite-ecs",
     "crates/ferrite",
 ]
 

@@ -543,6 +543,7 @@ dependencies = [
  "env_logger",
  "ferrite-assets",
  "ferrite-core",
+ "ferrite-ecs",
  "ferrite-input",
  "ferrite-render",
  "log",
@@ -559,6 +560,10 @@ dependencies = [
 
 [[package]]
 name = "ferrite-core"
+version = "0.1.0"
+
+[[package]]
+name = "ferrite-ecs"
 version = "0.1.0"
 
 [[package]]

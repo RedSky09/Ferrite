@@ -32,9 +32,9 @@ a demo GIF, and architecture notes.
 
 \- \[x] M4: Asset loading, spritesheets, animation, simple bitmap font
 
-\- \[ ] M5: Entity system (ECS)
+\- \[x] M5: Entity system (ECS)
 
-&#x20; - \[ ] M5b: Game states (Menu, Playing, GameOver)
+&#x20; - \[x] M5b: Game states (Menu, Playing, GameOver)
 
 \- \[ ] M6: Scene format (serialize/load scenes from files)
 
