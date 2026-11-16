@@ -5,6 +5,28 @@ pub struct Texture {
 }
 
 impl Texture {
+    /// Wraps a texture in a bind group matching the sprite pipeline's layout.
+    pub fn bind_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sprite bind group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        })
+    }
+
     /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel) to the GPU.
     pub fn from_rgba8(
         device: &wgpu::Device,

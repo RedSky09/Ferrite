@@ -30,7 +30,7 @@ a demo GIF, and architecture notes.
 
 \- \[x] M3: Input
 
-\- \[ ] M4: Asset loading, spritesheets, animation, simple bitmap font
+\- \[x] M4: Asset loading, spritesheets, animation, simple bitmap font
 
 \- \[ ] M5: Entity system (ECS)
 

@@ -10,9 +10,10 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 // Games only need to depend on `ferrite`, so re-export what they use.
+pub use ferrite_assets::{Animation, Font, Frame, Image, Rect, Spritesheet};
 pub use ferrite_core::camera::Camera2D;
 pub use ferrite_input::{Input, Key};
-pub use ferrite_render::{Graphics, Sprite};
+pub use ferrite_render::{Atlas, Graphics, Sprite, UvRect};
 
 /// Basic engine settings.
 pub struct Config {
@@ -125,7 +126,7 @@ impl<G: Game> ApplicationHandler for App<G> {
                 self.gfx.begin_frame();
                 self.game.draw(&mut self.gfx);
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.render(&self.gfx);
+                    renderer.render(&mut self.gfx);
                 }
             }
             _ => {}

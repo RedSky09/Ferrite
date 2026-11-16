@@ -11,3 +11,9 @@ pollster = "1.0.1"
 wgpu = "30.0.1"
 winit = "0.30"
 ferrite-core = { path = "../ferrite-core" }
+ferrite-assets = { path = "../ferrite-assets" }
+
+[dev-dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
+pollster = "1.0.1"
+wgpu = "30.0.1"
