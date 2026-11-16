@@ -15,7 +15,7 @@ pub use ferrite_core::camera::Camera2D;
 pub use ferrite_core::state::{State, StateMachine};
 pub use ferrite_ecs::{Entity, World};
 pub use ferrite_input::{Input, Key};
-pub use ferrite_render::{Atlas, Graphics, Sprite, UvRect};
+pub use ferrite_render::{Align, Anchor, Atlas, Graphics, Sprite, UvRect, VAlign};
 
 /// Basic engine settings.
 pub struct Config {

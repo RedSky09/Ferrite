@@ -7,7 +7,7 @@
 //! move the player.
 
 use ferrite::{
-    run, Atlas, Config, Font, Game, Graphics, Input, Key, Sprite, State, StateMachine, World,
+    run, Anchor, Atlas, Config, Font, Game, Graphics, Input, Key, Sprite, State, StateMachine, World,
 };
 
 // --- components: plain data ------------------------------------------------
@@ -202,9 +202,18 @@ impl Demo {
         }
     }
 
-    fn draw_text(&self, gfx: &mut Graphics, text: &str, y: f32, size: f32) {
+    /// Draws one line of text centered horizontally at a world y.
+    fn text_centered(&self, gfx: &mut Graphics, text: &str, y: f32, pixel_size: f32, color: [f32; 3]) {
         if let Some(atlas) = self.font_atlas {
-            gfx.draw_text(&self.font, atlas, text, [-6.0, y], size);
+            gfx.draw_text_colored(
+                &self.font,
+                atlas,
+                text,
+                [0.0, y],
+                pixel_size,
+                Anchor::CENTER,
+                color,
+            );
         }
     }
 }
@@ -247,21 +256,24 @@ impl Game for Demo {
         match self.states.current() {
             GameState::Menu => {
                 gfx.clear_color = [0.05, 0.08, 0.14];
-                self.draw_text(gfx, "FERRITE M5", 2.0, 0.18);
-                self.draw_text(gfx, "PRESS ENTER", 0.0, 0.12);
+                self.text_centered(gfx, "FERRITE", 2.2, 0.22, [0.55, 0.85, 1.0]);
+                self.text_centered(gfx, "ECS DEMO", 0.9, 0.1, [0.4, 0.55, 0.75]);
+                self.text_centered(gfx, "PRESS ENTER TO START", -1.6, 0.09, [0.85, 0.85, 0.9]);
+                self.text_centered(gfx, "ARROWS MOVE   SPACE SHOOT", -2.6, 0.075, [0.5, 0.5, 0.6]);
             }
             GameState::Playing => {
                 gfx.clear_color = [0.07, 0.07, 0.10];
                 self.draw_world(gfx);
-                let line = format!("SCORE {0}", self.score);
-                self.draw_text(gfx, &line, 5.0, 0.12);
+                let score = format!("SCORE {}", self.score);
+                self.text_centered(gfx, &score, 5.2, 0.1, [0.85, 0.85, 0.9]);
             }
             GameState::GameOver => {
                 gfx.clear_color = [0.16, 0.05, 0.06];
                 self.draw_world(gfx);
-                self.draw_text(gfx, "GAME OVER", 1.0, 0.2);
-                let line = format!("SCORE {0} - ENTER TO RETRY", self.score);
-                self.draw_text(gfx, &line, 0.0, 0.1);
+                self.text_centered(gfx, "GAME OVER", 1.4, 0.24, [1.0, 0.55, 0.5]);
+                let score = format!("SCORE {}", self.score);
+                self.text_centered(gfx, &score, -0.2, 0.11, [0.9, 0.9, 0.9]);
+                self.text_centered(gfx, "PRESS ENTER TO RETRY", -1.6, 0.08, [0.7, 0.7, 0.75]);
             }
         }
     }

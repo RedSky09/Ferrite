@@ -165,8 +165,24 @@ fn pipeline(
     (pipeline, camera_layout, texture_layout)
 }
 
-/// Renders `vertices` (as triangles) and returns the RGBA8 pixels.
+/// Renders `vertices` (as triangles) with the default 2x2 test texture.
 fn render(t: &Target, vertices: &[Vertex]) -> Vec<u8> {
+    // A 2x2 texture: top-left red, top-right green, bottom-left blue, white elsewhere.
+    let pixels: [u8; 16] = [
+        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+    render_textured(t, vertices, 2, 2, &pixels)
+}
+
+/// Renders `vertices` (as triangles) sampling `pixels` (size `tex_w` x `tex_h`),
+/// and returns the RGBA8 pixels of the 64x64 target.
+fn render_textured(
+    t: &Target,
+    vertices: &[Vertex],
+    tex_w: u32,
+    tex_h: u32,
+    pixels: &[u8],
+) -> Vec<u8> {
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: FORMAT,
@@ -206,13 +222,13 @@ fn render(t: &Target, vertices: &[Vertex]) -> Vec<u8> {
         }],
     });
 
-    // A 2x2 texture: top-left red, top-right green, bottom-left blue, white elsewhere.
-    let pixels: [u8; 16] = [
-        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
-    ];
     let tex = t.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
-        size: wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: tex_w,
+            height: tex_h,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -227,13 +243,17 @@ fn render(t: &Target, vertices: &[Vertex]) -> Vec<u8> {
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        &pixels,
+        pixels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(8),
-            rows_per_image: Some(2),
+            bytes_per_row: Some(4 * tex_w),
+            rows_per_image: Some(tex_h),
         },
-        wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width: tex_w,
+            height: tex_h,
+            depth_or_array_layers: 1,
+        },
     );
     let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler = t.device.create_sampler(&wgpu::SamplerDescriptor {
@@ -419,4 +439,70 @@ fn two_quads_cover_their_halves() {
     // Left quad is tinted white over a white texel; right is tinted black.
     assert!(pixel(&px, 16, 32)[0] > 200, "left should be white");
     assert!(pixel(&px, 48, 32)[0] < 40, "right should be black");
+}
+
+#[test]
+fn centered_text_is_horizontally_symmetric() {
+    use ferrite_assets::font::GLYPH_HEIGHT;
+    use ferrite_assets::Font;
+
+    let Some(t) = target() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+
+    // At pixel_size = 1 world unit per font pixel, one glyph cell is 5x7 world
+    // units. The 64x64 target covers world [-1, 1], so a 6-character word is
+    // far too wide on screen; scale so the whole word fits with margin.
+    let font = Font::builtin();
+    let text = "CENTER";
+    let pixel_size = 0.06_f32;
+
+    // Build the glyph quads the same way `Graphics::draw_text_colored` does
+    // with `Anchor::CENTER`, but derive the block width here so this test does
+    // not simply re-run the code under test.
+    let block_w = text.chars().count() as f32 * font.advance() as f32 * pixel_size;
+    let block_h = GLYPH_HEIGHT as f32 * pixel_size;
+    let top_left = [-block_w * 0.5, block_h * 0.5]; // centered on origin
+
+    let aw = font.atlas().width();
+    let ah = font.atlas().height();
+    let mut vertices: Vec<Vertex> = Vec::new();
+    for (rect, x, y) in font.layout(text, 0, 0) {
+        let [u0, v0, u1, v1] = rect.uv(aw, ah);
+        let w = rect.width as f32 * pixel_size;
+        let h = rect.height as f32 * pixel_size;
+        let cx = top_left[0] + x as f32 * pixel_size + w * 0.5;
+        let cy = top_left[1] - y as f32 * pixel_size - h * 0.5;
+        vertices.extend_from_slice(&quad(
+            [cx, cy],
+            [w, h],
+            [1.0, 1.0, 1.0],
+            [u0, v0, u1, v1],
+        ));
+    }
+
+    let px = render_textured(&t, &vertices, aw, ah, font.atlas().rgba());
+
+    // Find the horizontal extent of lit pixels.
+    let mut min_x = WIDTH;
+    let mut max_x = 0u32;
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            if pixel(&px, x, y)[0] > 60 {
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+            }
+        }
+    }
+    assert!(max_x >= min_x, "text should have lit some pixels");
+
+    // The lit span should be centered on the target's middle column (32).
+    let left_margin = min_x;
+    let right_margin = WIDTH - 1 - max_x;
+    let diff = (left_margin as i32 - right_margin as i32).abs();
+    assert!(
+        diff <= 2,
+        "text not centered: left margin {left_margin}, right margin {right_margin}"
+    );
 }

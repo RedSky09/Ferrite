@@ -42,8 +42,7 @@ impl Default for UvRect {
 
 /// A textured rectangle to draw this frame.
 #[derive(Clone, Copy, Debug)]
-pub struct Sprite {
-    /// World position of the sprite's center.
+pub struct Sprite {    /// World position of the sprite's center.
     pub position: [f32; 2],
     /// Width and height in world units.
     pub size: [f32; 2],
@@ -88,6 +87,61 @@ impl Atlas {
     /// Tinting it any color produces a solid rectangle, which is what the
     /// engine's untextured sprites have always been.
     pub const WHITE: Atlas = Atlas(0);
+}
+
+/// A horizontal alignment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    Left,
+    Center,
+    Right,
+}
+
+/// A vertical alignment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
+/// Where a block of text sits relative to a point.
+///
+/// The pair says which corner/edge of the text's bounding box is placed at the
+/// caller's position. `Anchor::CENTER` centers the text on the point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Anchor {
+    pub h: Align,
+    pub v: VAlign,
+}
+
+impl Anchor {
+    pub const TOP_LEFT: Self = Self {
+        h: Align::Left,
+        v: VAlign::Top,
+    };
+    pub const TOP_CENTER: Self = Self {
+        h: Align::Center,
+        v: VAlign::Top,
+    };
+    pub const CENTER: Self = Self {
+        h: Align::Center,
+        v: VAlign::Middle,
+    };
+    pub const BOTTOM_CENTER: Self = Self {
+        h: Align::Center,
+        v: VAlign::Bottom,
+    };
+
+    pub const fn new(h: Align, v: VAlign) -> Self {
+        Self { h, v }
+    }
+}
+
+impl Default for Anchor {
+    fn default() -> Self {
+        Self::TOP_LEFT
+    }
 }
 
 /// The game's handle to the renderer. During `Game::draw` it only collects
@@ -171,11 +225,34 @@ impl Graphics {
         );
     }
 
-    /// Draws `text` with a bitmap font atlas.
+    /// The world-space size of `text` drawn at `pixel_size`.
     ///
-    /// `origin` is the top-left of the text in world units. `pixel_size` is how
-    /// many world units one font pixel covers, and the atlas must have been
-    /// uploaded from `font.atlas()`.
+    /// Returns `(width, height)`. The width is the widest line; the height
+    /// covers the glyphs: each line is one glyph tall, plus a one-pixel gap
+    /// between lines. The box hugs the glyphs, so centering single-line text
+    /// centers the letters rather than including a trailing blank row.
+    pub fn measure_text(
+        font: &ferrite_assets::Font,
+        text: &str,
+        pixel_size: f32,
+    ) -> [f32; 2] {
+        let glyph_h = ferrite_assets::font::GLYPH_HEIGHT as f32 * pixel_size;
+        let gap = pixel_size;
+        let advance = font.advance() as f32 * pixel_size;
+        let mut widest = 0f32;
+        for line in text.split('\n') {
+            widest = widest.max(line.chars().count() as f32 * advance);
+        }
+        let lines = text.split('\n').count() as f32;
+        // `lines` glyphs high, with a gap between each pair of lines.
+        let height = lines * glyph_h + (lines - 1.0).max(0.0) * gap;
+        [widest, height]
+    }
+
+    /// Draws `text` with its top-left corner at `origin`, in white.
+    ///
+    /// `pixel_size` is how many world units one font pixel covers, and the
+    /// atlas must have been uploaded from `font.atlas()`.
     pub fn draw_text(
         &mut self,
         font: &ferrite_assets::Font,
@@ -184,19 +261,69 @@ impl Graphics {
         origin: [f32; 2],
         pixel_size: f32,
     ) {
+        self.draw_text_anchored(font, atlas, text, origin, pixel_size, Anchor::TOP_LEFT);
+    }
+
+    /// Draws `text` aligned to `position` using `anchor`, in white.
+    ///
+    /// With [`Anchor::CENTER`] the text is centered on `position`, which is the
+    /// usual way to put a title or a "GAME OVER" banner in the middle of the
+    /// screen. Multi-line text (`\n`) is handled.
+    pub fn draw_text_anchored(
+        &mut self,
+        font: &ferrite_assets::Font,
+        atlas: Atlas,
+        text: &str,
+        position: [f32; 2],
+        pixel_size: f32,
+        anchor: Anchor,
+    ) {
+        self.draw_text_colored(font, atlas, text, position, pixel_size, anchor, [1.0, 1.0, 1.0]);
+    }
+
+    /// The full-control text call: alignment and tint.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_colored(
+        &mut self,
+        font: &ferrite_assets::Font,
+        atlas: Atlas,
+        text: &str,
+        position: [f32; 2],
+        pixel_size: f32,
+        anchor: Anchor,
+        color: [f32; 3],
+    ) {
         let aw = font.atlas().width();
         let ah = font.atlas().height();
+        let [block_w, block_h] = Self::measure_text(font, text, pixel_size);
+
+        // Offset from the anchor point to the text box's top-left corner.
+        // Font/world y is up here: the text box extends *downward* from its
+        // top-left, so anchoring to the middle or bottom moves the top edge up.
+        let offset_x = match anchor.h {
+            Align::Left => 0.0,
+            Align::Center => -block_w * 0.5,
+            Align::Right => -block_w,
+        };
+        let offset_y = match anchor.v {
+            VAlign::Top => 0.0,
+            VAlign::Middle => block_h * 0.5,
+            VAlign::Bottom => block_h,
+        };
+        let top_left = [position[0] + offset_x, position[1] + offset_y];
+
         for (rect, x, y) in font.layout(text, 0, 0) {
             let [u0, v0, u1, v1] = rect.uv(aw, ah);
             // Font layout is top-left based; sprites are centered.
             let w = rect.width as f32 * pixel_size;
             let h = rect.height as f32 * pixel_size;
-            let cx = origin[0] + x as f32 * pixel_size + w * 0.5;
-            let cy = origin[1] - (y as f32 * pixel_size) - h * 0.5;
+            let cx = top_left[0] + x as f32 * pixel_size + w * 0.5;
+            let cy = top_left[1] - (y as f32 * pixel_size) - h * 0.5;
             self.draw_sprite(
                 Sprite::new([cx, cy], [w, h])
                     .with_atlas(atlas)
-                    .with_uv(UvRect::new(u0, v0, u1, v1)),
+                    .with_uv(UvRect::new(u0, v0, u1, v1))
+                    .with_color(color),
             );
         }
     }
@@ -307,5 +434,73 @@ mod tests {
         // Top-left origin + half the scaled size.
         assert!((s.position[0] - (10.0 + half_w)).abs() < 1e-6);
         assert!((s.position[1] - (5.0 - half_h)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn measure_text_matches_layout_advances() {
+        let font = ferrite_assets::Font::builtin();
+        let advance = font.advance() as f32;
+        // 3 characters on one line.
+        let [w, _h] = Graphics::measure_text(&font, "ABC", 1.0);
+        assert!((w - 3.0 * advance).abs() < 1e-5);
+        // Two lines is taller than one.
+        let [_, h1] = Graphics::measure_text(&font, "A", 1.0);
+        let [_, h2] = Graphics::measure_text(&font, "A\nB", 1.0);
+        assert!(h2 > h1);
+    }
+
+    #[test]
+    fn center_anchor_symmetrically_shifts_the_block() {
+        let mut gfx = Graphics::new();
+        let font = ferrite_assets::Font::builtin();
+        let text = "AB";
+
+        // Draw at top-left origin 0,0.
+        gfx.draw_text(&font, Atlas(1), text, [0.0, 0.0], 1.0);
+        let tl: Vec<_> = gfx.sprites().iter().map(|s| s.position).collect();
+        gfx.begin_frame();
+
+        // Draw the same text centered on the block's own center, which should
+        // reproduce the exact same positions.
+        let [w, h] = Graphics::measure_text(&font, text, 1.0);
+        let center = [w * 0.5, -h * 0.5];
+        gfx.draw_text_anchored(&font, Atlas(1), text, center, 1.0, Anchor::CENTER);
+        let centered: Vec<_> = gfx.sprites().iter().map(|s| s.position).collect();
+
+        assert_eq!(tl.len(), centered.len());
+        for (a, b) in tl.iter().zip(centered.iter()) {
+            assert!((a[0] - b[0]).abs() < 1e-5, "x {a:?} vs {b:?}");
+            assert!((a[1] - b[1]).abs() < 1e-5, "y {a:?} vs {b:?}");
+        }
+    }
+
+    #[test]
+    fn right_and_top_anchors_shift_opposite_ways() {
+        let font = ferrite_assets::Font::builtin();
+        let text = "A";
+        let [w, _] = Graphics::measure_text(&font, text, 1.0);
+
+        let mut gfx = Graphics::new();
+        gfx.draw_text_anchored(&font, Atlas(1), text, [0.0, 0.0], 1.0, Anchor::TOP_LEFT);
+        let left_x = gfx.sprites()[0].position[0];
+        gfx.begin_frame();
+        gfx.draw_text_anchored(&font, Atlas(1), text, [0.0, 0.0], 1.0, Anchor::TOP_CENTER);
+        let center_x = gfx.sprites()[0].position[0];
+        gfx.begin_frame();
+        gfx.draw_text_anchored(
+            &font,
+            Atlas(1),
+            text,
+            [0.0, 0.0],
+            1.0,
+            Anchor::new(Align::Right, VAlign::Top),
+        );
+        let right_x = gfx.sprites()[0].position[0];
+
+        // Left is rightmost-shifted by 0, center by half, right by full width.
+        assert!(center_x < left_x);
+        assert!((left_x - center_x - w * 0.5).abs() < 1e-5);
+        assert!(right_x < center_x);
+        assert!((left_x - right_x - w).abs() < 1e-5);
     }
 }

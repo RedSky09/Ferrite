@@ -9,7 +9,7 @@ use wgpu::CurrentSurfaceTexture;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
-pub use crate::graphics::{Atlas, Graphics, Sprite, UvRect};
+pub use crate::graphics::{Align, Anchor, Atlas, Graphics, Sprite, UvRect, VAlign};
 use crate::texture::Texture;
 
 const INITIAL_SPRITE_CAPACITY: usize = 256;

@@ -15,5 +15,6 @@ ferrite-assets = { path = "../ferrite-assets" }
 
 [dev-dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
+ferrite-assets = { path = "../ferrite-assets" }
 pollster = "1.0.1"
 wgpu = "30.0.1"

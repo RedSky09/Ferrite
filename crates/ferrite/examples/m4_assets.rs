@@ -6,7 +6,8 @@
 //! font atlas, so the frame is two draw calls.
 
 use ferrite::{
-    run, Animation, Atlas, Config, Font, Game, Graphics, Image, Input, Key, Spritesheet,
+    run, Align, Anchor, Animation, Atlas, Config, Font, Game, Graphics, Image, Input, Key,
+    Spritesheet, VAlign,
 };
 
 struct Demo {
@@ -121,23 +122,28 @@ impl Game for Demo {
             [px * 2.0, py * 2.0],
         );
 
-        // Text overlay. World units, so 0.12 per font pixel is readable.
+        // Text overlay. World units; 0.12 per font pixel is readable at this
+        // camera height. Left-anchored, stacked with a clear size hierarchy.
         let font = &self.font;
         let font_atlas = self.font_atlas.unwrap();
-        gfx.draw_text(font, font_atlas, "FERRITE M4", [-5.5, 5.0], 0.12);
-        gfx.draw_text(
-            font,
-            font_atlas,
-            &format!("speed x{:.1}  {}", self.speed, if self.paused { "paused" } else { "playing" }),
-            [-5.5, 4.2],
-            0.09,
+        let left = Anchor::new(Align::Left, VAlign::Top);
+        gfx.draw_text_colored(
+            font, font_atlas, "FERRITE M4", [-5.5, 5.2], 0.14, left, [0.55, 0.85, 1.0],
         );
-        gfx.draw_text(
+        let status = format!(
+            "speed x{:.1}  {}",
+            self.speed,
+            if self.paused { "paused" } else { "playing" }
+        );
+        gfx.draw_text_colored(font, font_atlas, &status, [-5.5, 4.5], 0.08, left, [0.85, 0.85, 0.9]);
+        gfx.draw_text_colored(
             font,
             font_atlas,
-            "ARROWS move  SPACE pause  A/D speed",
-            [-5.5, -5.2],
-            0.09,
+            "ARROWS MOVE   SPACE PAUSE   A/D SPEED",
+            [-5.5, -5.4],
+            0.07,
+            left,
+            [0.55, 0.55, 0.65],
         );
     }
 }
